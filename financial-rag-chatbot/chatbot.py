@@ -1,7 +1,3 @@
-# chatbot.py — FinSight AI (Gemini-style header w/o hero input) + Theme Toggle
-# + fast Yahoo/TD router + cached fallbacks
-# + Index/Exchange Screener (DAX, FTSE100, CAC40, NIFTY50, NASDAQ100, S&P sample, Nikkei225)
-# + top_n parsing for queries like "top 5 in dax"
 from __future__ import annotations
 import os, json, re, time
 from dataclasses import dataclass
@@ -17,7 +13,7 @@ from src.td_client import search_symbol_td
 from src.router import get_quote_fast, get_daily_fast
 from src.cache_store import get_cached_quote, get_cached_daily
 
-# Screener helpers (you already added these)
+# Screener helpers
 from src.indexes import resolve_universe      # maps user text → (key, tickers, label)
 from src.screener import screen_universe      # runs gainers/losers/active over that universe
 
@@ -171,7 +167,7 @@ def cached_daily_fast(sym: str):
     return get_daily_fast(sym)
 
 # ------------------------------------------------------------------------------------
-# Name → ticker resolution (fast, robust)
+# Name → ticker resolution
 # ------------------------------------------------------------------------------------
 if "_NAME_CACHE" not in st.session_state:
     st.session_state._NAME_CACHE = {}
