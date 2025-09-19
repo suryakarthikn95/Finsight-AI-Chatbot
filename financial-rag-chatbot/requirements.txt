@@ -2,7 +2,7 @@ pandas
 requests
 openai
 langchain
-streamlit # or another framework for your UI
+streamlit
 alpha_vantage
 python-dotenv
 yfinance
