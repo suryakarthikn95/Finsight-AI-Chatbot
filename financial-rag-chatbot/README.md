@@ -1,7 +1,7 @@
 FinSight.AI is an interactive financial chatbot built with Streamlit + LLMs.
 It helps you quickly look up stock quotes, price trends, and now even scan entire indexes like DAX, FTSE100, CAC40, NIFTY50, NASDAQ100, S&P sample, and NIKKEI225.
 
-🚀 Features
+🚀 Features:
 	•	Chat-based interface → Ask in plain English, e.g.
 	•	"Apple latest price"
 	•	"trend for Reliance last 5 days"
