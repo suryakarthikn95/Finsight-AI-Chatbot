@@ -57,7 +57,7 @@ NIKKEI225: List[str] = [
     "7267.T","9432.T","2914.T","6367.T","6981.T","7269.T","8591.T","8001.T","8411.T","4502.T"
 ]
 
-# --- Aliases: flexible user phrases you want to support ---
+# --- Aliases: flexible user phrases
 ALIASES: Dict[str, List[str]] = {
     "dax": ["dax", "dax40", "xetra", "deutsche börse", "germany index"],
     "ftse100": ["ftse", "ftse100", "ftse 100", "london", "lse 100"],
