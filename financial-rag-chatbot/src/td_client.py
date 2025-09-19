@@ -1,4 +1,4 @@
-# src/td_client.py
+
 from __future__ import annotations
 import os, math
 from typing import Optional, Dict, Any
