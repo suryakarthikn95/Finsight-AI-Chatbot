@@ -3,4 +3,5 @@ requests
 openai
 langchain
 streamlit # or another framework for your UI
-alphavantage-python
+alpha_vantage
+python-dotenv
