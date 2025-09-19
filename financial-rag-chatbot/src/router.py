@@ -1,4 +1,4 @@
-# src/router.py
+
 from __future__ import annotations
 import os, concurrent.futures as fut
 from typing import Optional, Tuple
@@ -16,7 +16,7 @@ def _valid_daily(df: Optional[pd.DataFrame]) -> bool:
     return isinstance(df, pd.DataFrame) and not df.empty and {"date", "close"}.issubset(df.columns)
 
 def get_quote_fast(symbol: str, timeout_each: float = 5.0) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
-    # Yahoo tends to respond fastest → try it first in the race
+    
     def yf():
         try: return get_quote_yf(symbol)
         except Exception: return None
