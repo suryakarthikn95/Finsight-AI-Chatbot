@@ -1,29 +1,42 @@
-Finsight.AI is a chatbot for the markets.
+FinSight.AI is an interactive financial chatbot built with Streamlit + LLMs.
+It helps you quickly look up stock quotes, price trends, and now even scan entire indexes like DAX, FTSE100, CAC40, NIFTY50, NASDAQ100, S&P sample, and NIKKEI225.
 
-Ask it about a company or ticker in plain English and it will fetch the latest stock quotes or trends for you.
+🚀 Features
+	•	Chat-based interface → Ask in plain English, e.g.
+	•	"Apple latest price"
+	•	"trend for Reliance last 5 days"
+	•	"quote META"
+	•	Index & Exchange Screener → Get top gainers, losers, or most active stocks in major indexes:
+	•	"top 5 companies in the DAX"
+	•	"what’s moving in FTSE 100 today"
+	•	"biggest losers in NASDAQ 100"
+	•	Fast Data Retrieval → Uses Yahoo Finance + TD API with fallbacks & caching.
+	•	Dark/Light Theme Toggle.
+	•	Optional summaries → LLM-powered concise summaries of quotes and trends.
 
-Example questions you can try:
-- Apple latest price
-- Trend for Reliance last 5 days
-- Quote Meta
-- Tesla latest price
+🛠 Setup
+1. Clone repo:
+    git clone https://github.com/your-username/finsight-ai.git
+    cd finsight-ai
 
-✨ What it does
-- Clean, Gemini-inspired interface with a friendly greeting
-- Chat-style input (no clutter, just type and go)
-- Dark / Light theme switch in the sidebar
-- Pulls data from **Twelve Data** and **Yahoo Finance** for speed
-- Falls back to cached data if APIs are slow
-- (Optional) OpenAI integration for smarter queries and short summaries
+2.  Install requirements:
+    pip install -r requirements.txt
 
-🚀 Getting started
+3. Environment variables. Copy .env.example → .env and add your keys:
+    OPENAI_API_KEY=your_key_here
+    TD_API_KEY=your_td_key_here
 
-Clone the repo and set up your environment:
+4. Run the application:
+    streamlit run chatbot.py
 
-```bash
-git clone https://github.com/<your-username>/<your-repo>.git
-cd <your-repo>
+Example Queries
+	•	"Infosys latest price"
+	•	"trend for Tesla last week"
+	•	"which companies are worth looking at in NIFTY 50 today"
+	•	"top 3 losers in CAC40"
+	•	"most active in NASDAQ 100"
 
-python -m venv .venv
-source .venv/bin/activate    # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+🔮 Roadmap
+	•	Portfolio-style watchlists
+	•	More global indexes (Shanghai, Hang Seng, etc.)
+	•	Advanced analytics (PE ratios, news sentiment)

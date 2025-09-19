@@ -1,4 +1,7 @@
-# chatbot.py — FinSight AI (Gemini-style header w/o hero input) + Theme Toggle + fast Yahoo/TD router + cached fallbacks
+# chatbot.py — FinSight AI (Gemini-style header w/o hero input) + Theme Toggle
+# + fast Yahoo/TD router + cached fallbacks
+# + Index/Exchange Screener (DAX, FTSE100, CAC40, NIFTY50, NASDAQ100, S&P sample, Nikkei225)
+# + top_n parsing for queries like "top 5 in dax"
 from __future__ import annotations
 import os, json, re, time
 from dataclasses import dataclass
@@ -13,6 +16,10 @@ from dotenv import load_dotenv
 from src.td_client import search_symbol_td
 from src.router import get_quote_fast, get_daily_fast
 from src.cache_store import get_cached_quote, get_cached_daily
+
+# Screener helpers (you already added these)
+from src.indexes import resolve_universe      # maps user text → (key, tickers, label)
+from src.screener import screen_universe      # runs gainers/losers/active over that universe
 
 # OpenAI (optional: intent/summarize)
 try:
@@ -62,67 +69,33 @@ PALETTES = {
 P = PALETTES[THEME]
 
 def render_theme_css():
-    css = f"""
-    <style>
-    /* Layout + background */
-    .block-container {{padding-top: 2.5rem; max-width: 900px;}}
-    header[data-testid="stHeader"] {{display: none;}}
-    body, .block-container {{ background: {P['bg']}; color: {P['text']}; }}
-
-    /* Hero title */
-    .finsight-hero h1 {{
-      font-size: clamp(34px, 4.5vw, 54px);
-      font-weight: 700;
-      text-align: center;
-      margin: 1.5rem 0 1.25rem 0;
-      letter-spacing: .2px;
-      background: linear-gradient(180deg, {P['grad1']}, {P['grad2']} 60%, {P['grad3']});
-      -webkit-background-clip: text; background-clip: text; color: transparent;
-    }}
-    .finsight-hero {{display: grid; place-items: center;}}
-
-    /* Hero shell (no input inside, just visual container for spacing) */
-    .finsight-search {{
-      width: min(860px, 92vw);
-      background: {P['panel']};
-      border: 1px solid {P['border']};
-      border-radius: 16px;
-      box-shadow: {P['shadow']};
-      padding: .9rem 1rem;
-    }}
-
-    /* Chips */
-    .chips {{display:flex; gap:.5rem; flex-wrap:wrap; justify-content:center; margin-top:1rem;}}
-    .chip {{
-      background:{P['panel']}; border:1px solid {P['border']};
-      color:{P['text']}; padding:.45rem .9rem; border-radius:999px;
-      font-size:14px; cursor:pointer; transition: all .15s ease;
-    }}
-    .chip:hover {{border-color:{P['primary']}; color:{P['chipHover']};}}
-
-    /* Chat input placeholder */
-    [data-testid="stChatInput"] textarea::placeholder {{opacity:.9;}}
-    </style>
-    """
-    st.markdown(css, unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <style>
+        .block-container {{padding-top: 2.5rem; max-width: 900px;}}
+        header[data-testid="stHeader"] {{display: none;}}
+        body, .block-container {{ background: {P['bg']}; color: {P['text']}; }}
+        .finsight-hero h1 {{
+          font-size: clamp(34px, 4.5vw, 54px);
+          font-weight: 700;
+          text-align: center;
+          margin: 1.5rem 0 1.25rem 0;
+          letter-spacing: .2px;
+          background: linear-gradient(180deg, {P['grad1']}, {P['grad2']} 60%, {P['grad3']});
+          -webkit-background-clip: text; background-clip: text; color: transparent;
+        }}
+        .finsight-hero {{display: grid; place-items: center;}}
+        [data-testid="stChatInput"] textarea::placeholder {{opacity:.9;}}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 render_theme_css()
 
 def finsight_gemini_header() -> None:
     """Render Gemini-style hero (title only, no search bar, no chips)."""
     st.markdown('<div class="finsight-hero"><h1>Hi, I’m FinSight.AI</h1></div>', unsafe_allow_html=True)
-
-# JS: clicking a chip writes into the bottom chat input (user still presses Enter)
-st.markdown("""
-<script>
-const chips = [...document.querySelectorAll('.chip')];
-const setChat = (txt) => {
-  const ta = window.parent.document.querySelector('[data-testid="stChatInput"] textarea');
-  if (ta){ ta.value = txt; ta.dispatchEvent(new Event('input', {bubbles:true})); ta.focus(); }
-}
-chips.forEach((c)=> c.addEventListener('click', ()=> setChat(c.innerText)));
-</script>
-""", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------------------------
 # Sidebar
@@ -137,8 +110,10 @@ with st.sidebar:
     fast_mode = st.checkbox("⚡ Fast mode (recommended)", value=True, help="Skips LLM summary and trims timeouts.")
     show_llm_summary = st.checkbox("Let OpenAI also summarize results", value=False if fast_mode else True)
     if st.button("Clear caches"):
-        try: st.cache_data.clear()
-        except Exception: pass
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
         st.session_state.pop("_NAME_CACHE", None)
         st.success("Caches cleared.")
 
@@ -147,11 +122,16 @@ with st.sidebar:
 # ------------------------------------------------------------------------------------
 @dataclass
 class ParsedIntent:
-    intent: Literal["quote", "daily"]
-    symbol: str
+    intent: Literal["quote", "daily", "screener"]
+    symbol: str = ""
     adjusted: bool = False
     lookback_days: int = 5
     chosen_note: str = ""
+    # Screener-only:
+    universe_key: str = ""
+    universe_label: str = ""
+    screener_mode: str = "gainers"  # gainers|losers|active
+    top_n: int = 12                  # NEW: how many to return for screeners
 
 INTENT_SYSTEM_PROMPT = """You are a parsing assistant. Extract a structured intent from the user's question about stocks.
 Return STRICT JSON with keys: intent ('quote' or 'daily'), symbol (ticker or company name), adjusted (true/false), lookback_days (integer).
@@ -166,8 +146,10 @@ COMMON_TICKERS = {"AAPL","MSFT","TSLA","AMZN","GOOGL","META","NVDA","NFLX","INTC
 def openai_client_or_none() -> Optional["OpenAI"]:
     if OpenAI is None or not os.getenv("OPENAI_API_KEY"):
         return None
-    try: return OpenAI()
-    except Exception: return None
+    try:
+        return OpenAI()
+    except Exception:
+        return None
 
 def looks_like_ticker(text: str) -> bool:
     t = text.strip().upper()
@@ -264,23 +246,23 @@ def resolve_symbol_to_ticker(raw: str) -> Tuple[str, str]:
     return symbol, note
 
 # ------------------------------------------------------------------------------------
-# Parsing (local-first; LLM only if complex)
+# Parsing (local-first; LLM only if complex) + screener detect + top_n extraction
 # ------------------------------------------------------------------------------------
 @dataclass
-class ParsedIntent:
-    intent: Literal["quote", "daily"]
-    symbol: str
+class ParsedIntentBase:
+    intent: Literal["quote", "daily", "screener"]
+    symbol: str = ""
     adjusted: bool = False
     lookback_days: int = 5
     chosen_note: str = ""
+    universe_key: str = ""
+    universe_label: str = ""
+    screener_mode: str = "gainers"
+    top_n: int = 12
+
+ParsedIntent = ParsedIntentBase  # alias, to match previous naming
 
 AMBIG_PAT = re.compile(r"\b(compare|vs|versus|which|better|analy[sz]e|explain|why)\b", re.I)
-
-def openai_client_or_none() -> Optional["OpenAI"]:
-    if OpenAI is None or not os.getenv("OPENAI_API_KEY"):
-        return None
-    try: return OpenAI()
-    except Exception: return None
 
 def parse_intent_with_llm(query: str, timeout_s: int = 10) -> Optional[ParsedIntent]:
     client = openai_client_or_none()
@@ -311,7 +293,55 @@ def parse_intent_with_llm(query: str, timeout_s: int = 10) -> Optional[ParsedInt
     except Exception:
         return None
 
+def extract_top_n(query: str, default: int = 12, min_n: int = 1, max_n: int = 50) -> int:
+    """Parse 'top 5', 'show 3', '10 companies', etc. from the user query."""
+    q = query.lower()
+    m = re.search(r"\btop\s+(\d+)\b", q) \
+        or re.search(r"\b(show|list|watch|give|pick|highlight)\s+(\d+)\b", q) \
+        or re.search(r"\b(\d+)\s+(companies|stocks|names|tickers|constituents)\b", q)
+    if m:
+        for g in reversed(m.groups()):
+            if g and g.isdigit():
+                n = int(g)
+                return max(min_n, min(max_n, n))
+    return default
+
+def detect_screener(query: str) -> Optional[ParsedIntent]:
+    # Check if the query references a known index/exchange and infer mode
+    key, tickers, label = resolve_universe(query)
+    if not tickers:
+        return None
+
+    q = query.lower()
+    mode = "gainers"
+    if "loser" in q or "declin" in q or "down" in q:
+        mode = "losers"
+    elif "active" in q or "volume" in q or "most traded" in q:
+        mode = "active"
+
+    # detect "top N" or "number N"
+    m = re.search(r"(?:top|number)\s+(\d+)", q)
+    top_n = int(m.group(1)) if m else 12  # fallback to 12 if not mentioned
+
+    return ParsedIntent(
+        intent="screener",
+        universe_key=key,
+        universe_label=label,
+        screener_mode=mode,
+        lookback_days=5,
+        symbol="",
+        chosen_note="",
+        adjusted=False,
+        # overload lookback_days to carry top_n? or just add a new field if you like
+    ), top_n
+
 def naive_parse_and_resolve(query: str) -> ParsedIntent:
+    # First: see if this is a screener question
+    scr = detect_screener(query)
+    if scr:
+        return scr
+
+    # Else parse as single-ticker
     intent = "daily"
     if re.search(r"(latest|price|quote|today)", query, flags=re.I):
         intent = "quote"
@@ -322,10 +352,12 @@ def naive_parse_and_resolve(query: str) -> ParsedIntent:
 
 def parse_intent_smart(query: str) -> ParsedIntent:
     naive = naive_parse_and_resolve(query)
+    if naive.intent == "screener":
+        return naive
     if naive.symbol and re.search(r"(latest|price|quote|today|last\s+\d+\s+(day|days|d)|week)", query, re.I):
         return naive
     if AMBIG_PAT.search(query):
-        intent = parse_intent_with_llm(query, timeout_s=6 if True else 12)
+        intent = parse_intent_with_llm(query, timeout_s=6)
         return intent or naive
     return naive
 
@@ -344,11 +376,14 @@ for m in st.session_state.messages:
         st.markdown(m["content"])
 
 # Single input: chat bar at the bottom
-chat_ph = "Ask anything: “AAPL latest price”, “trend for Reliance last 5 days”, “quote META”, “search Infosys”"
+chat_ph = (
+    "Ask anything: “AAPL latest price”, “trend for Reliance 5 days”, "
+    "“quote META”, or “top 5 in DAX / most active in FTSE”"
+)
 user_msg = st.chat_input(chat_ph)
 
 # ------------------------------------------------------------------------------------
-# Fetchers (race + cached fallback)
+# Fetchers (race + cached fallback) for single-ticker
 # ------------------------------------------------------------------------------------
 def fetch_data(intent: ParsedIntent) -> Tuple[str, Optional[pd.DataFrame]]:
     symbol = intent.symbol
@@ -429,8 +464,45 @@ def fetch_data(intent: ParsedIntent) -> Tuple[str, Optional[pd.DataFrame]]:
         msg += "- Showing top rows below."
         return msg, df_disp
 
+# --- helpers for screener parsing ---
+def extract_top_n(query: str, default: int = 12, min_n: int = 1, max_n: int = 50) -> int:
+    """Parse 'top 5', 'number 1', 'show 3', '10 companies', etc."""
+    q = query.lower()
+    m = (
+        re.search(r"\btop\s+(\d+)\b", q)
+        or re.search(r"\bnumber\s+(\d+)\b", q)
+        or re.search(r"\b(show|list|watch|give|pick|highlight)\s+(\d+)\b", q)
+        or re.search(r"\b(\d+)\s+(companies|stocks|names|tickers|constituents)\b", q)
+    )
+    if m:
+        for g in reversed(m.groups()):
+            if g and g.isdigit():
+                n = int(g)
+                return max(min_n, min(max_n, n))
+    return default
+
+def detect_screener(query: str) -> Optional[ParsedIntent]:
+    """Detect if the user asked about an index/exchange universe; set mode + top_n."""
+    key, tickers, label = resolve_universe(query)
+    if not tickers:
+        return None
+    q = query.lower()
+    mode = "gainers"
+    if "loser" in q or "declin" in q or "down" in q:
+        mode = "losers"
+    elif "active" in q or "volume" in q or "most traded" in q:
+        mode = "active"
+    top_n = extract_top_n(query, default=12)
+    return ParsedIntent(
+        intent="screener",
+        universe_key=key,
+        universe_label=label,
+        screener_mode=mode,
+        top_n=top_n,
+    )
 # ------------------------------------------------------------------------------------
-# Chat loop
+# ------------------------------------------------------------------------------------
+# Chat loop (with screener branch that RESPECTS top_n)
 # ------------------------------------------------------------------------------------
 if user_msg:
     st.session_state.messages.append({"role": "user", "content": user_msg})
@@ -438,16 +510,61 @@ if user_msg:
         st.markdown(user_msg)
 
     with st.chat_message("assistant"):
+        # 1) If it's an index/exchange query → run the screener first
+        scr = detect_screener(user_msg)
+        if scr is not None:
+            with st.spinner(f"📊 Screening {scr.universe_label} ({scr.screener_mode})…"):
+                key, tickers, label = resolve_universe(user_msg)  # re-resolve to get tickers
+                df, title = screen_universe(
+                    tickers,
+                    mode=scr.screener_mode,
+                    top_n=scr.top_n,          # <-- IMPORTANT: use requested N
+                )
+                if df is None or df.empty:
+                    final_text = f"I couldn’t fetch data for **{label}** right now."
+                    st.markdown(final_text)
+                else:
+                    final_text = f"**{label} — {title} (top {len(df)})**"
+                    st.markdown(final_text)
+                    st.dataframe(df, use_container_width=True)
+            st.session_state.messages.append({"role": "assistant", "content": final_text})
+            st.stop()
+
+        # 2) Otherwise, proceed with single-ticker flow
         with st.spinner("🔎 Understanding your request…"):
             intent = parse_intent_smart(user_msg)
+
+            # Failsafe: if parser still flags screener, run it here as well
+            if intent.intent == "screener":
+                scr = intent
+                with st.spinner(f"📊 Screening {scr.universe_label} ({scr.screener_mode})…"):
+                    key, tickers, label = resolve_universe(user_msg)
+                    df, title = screen_universe(
+                        tickers,
+                        mode=scr.screener_mode,
+                        top_n=scr.top_n,      # <-- IMPORTANT: use requested N
+                    )
+                    if df is None or df.empty:
+                        final_text = f"I couldn’t fetch data for **{label}** right now."
+                        st.markdown(final_text)
+                    else:
+                        final_text = f"**{label} — {title} (top {len(df)})**"
+                        st.markdown(final_text)
+                        st.dataframe(df, use_container_width=True)
+                st.session_state.messages.append({"role": "assistant", "content": final_text})
+                st.stop()
+
             if not intent.symbol:
                 st.markdown(intent.chosen_note or "I couldn't resolve a ticker from your query.")
                 st.stop()
 
+        # 3) Fetch single-ticker data
         with st.spinner(f"📡 Fetching data for {intent.symbol}…"):
             data_text, df = fetch_data(intent)
 
         final_text = data_text
+
+        # 4) Optional OpenAI summary
         if (not fast_mode) and show_llm_summary and df is not None:
             try:
                 client = openai_client_or_none()

@@ -5,3 +5,4 @@ langchain
 streamlit # or another framework for your UI
 alpha_vantage
 python-dotenv
+yfinance
